@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Boid Flocking Simulation</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-950 text-white min-h-screen flex flex-col">
+<div class="flex flex-col items-center p-3">
+  <h1 class="text-2xl font-bold text-cyan-400 mb-1">Boid Flocking Simulation</h1>
+  <p class="text-gray-400 text-xs mb-3">Craig Reynolds emergent flocking behavior</p>
+
+  <!-- Controls -->
+  <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3 w-full max-w-2xl bg-gray-800 rounded-xl p-3">
+    <div>
+      <label class="text-xs text-gray-400 block mb-1">Cohesion: <span id="cohVal">1.0</span></label>
+      <input type="range" id="cohesion" min="0" max="3" step="0.1" value="1.0" class="w-full accent-cyan-400" aria-label="Cohesion force">
+    </div>
+    <div>
+      <label class="text-xs text-gray-400 block mb-1">Separation: <span id="sepVal">1.5</span></label>
+      <input type="range" id="separation" min="0" max="5" step="0.1" value="1.5" class="w-full accent-green-400" aria-label="Separation force">
+    </div>
+    <div>
+      <label class="text-xs text-gray-400 block mb-1">Alignment: <span id="aliVal">1.0</span></label>
+      <input type="range" id="alignment" min="0" max="3" step="0.1" value="1.0" class="w-full accent-purple-400" aria-label="Alignment force">
+    </div>
+    <div>
+      <label class="text-xs text-gray-400 block mb-1">Boid Count: <span id="countVal">100</span></label>
+      <input type="range" id="boidCount" min="50" max="300" step="10" value="100" class="w-full accent-yellow-400" aria-label="Number of boids">
+    </div>
+    <div class="flex flex-col gap-1">
+      <button id="predatorBtn" aria-label="Toggle predator" class="px-3 py-1 bg-red-800 hover:bg-red-700 rounded text-sm transition">Predator: OFF</button>
+      <button id="trailBtn" aria-label="Toggle trails" class="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm transition">Trails: OFF</button>
+    </div>
+    <div class="flex items-end">
+      <button id="resetBtn" aria-label="Reset simulation" class="px-3 py-1 bg-blue-700 hover:bg-blue-600 rounded text-sm transition w-full">Reset</button>
+    </div>
+  </div>
+</div>
+
+<canvas id="boidCanvas" class="flex-1 w-full block" aria-label="Boid flocking simulation canvas"></canvas>
+
+<script>
+const canvas = document.getElementById('boidCanvas');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = Math.max(300, window.innerHeight - 220);
+}
+resize();
+window.addEventListener('resize', resize);
+
+let cohesion = 1.0, separation = 1.5, alignment = 1.0;
+let boidCount = 100;
+let predatorOn = false;
+let trailsOn = false;
+
+document.getElementById('cohesion').addEventListener('input', e => { cohesion=parseFloat(e.target.value); document.getElementById('cohVal').textContent=cohesion.toFixed(1); });
+document.getElementById('separation').addEventListener('input', e => { separation=parseFloat(e.target.value); document.getElementById('sepVal').textContent=separation.toFixed(1); });
+document.getElementById('alignment').addEventListener('input', e => { alignment=parseFloat(e.target.value); document.getElementById('aliVal').textContent=alignment.toFixed(1); });
+document.getElementById('boidCount').addEventListener('input', e => {
+  boidCount=parseInt(e.target.value);
+  document.getElementById('countVal').textContent=boidCount;
+  resetBoids();
+});
+document.getElementById('predatorBtn').addEventListener('click', () => {
+  predatorOn = !predatorOn;
+  document.getElementById('predatorBtn').textContent = 'Predator: '+(predatorOn?'ON':'OFF');
+  document.getElementById('predatorBtn').className = predatorOn ? 'px-3 py-1 bg-red-600 hover:bg-red-500 rounded text-sm transition' : 'px-3 py-1 bg-red-800 hover:bg-red-700 rounded text-sm transition';
+});
+document.getElementById('trailBtn').addEventListener('click', () => {
+  trailsOn = !trailsOn;
+  document.getElementById('trailBtn').textContent = 'Trails: '+(trailsOn?'ON':'OFF');
+  document.getElementById('trailBtn').className = trailsOn ? 'px-3 py-1 bg-indigo-600 hover:bg-indigo-500 rounded text-sm transition' : 'px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm transition';
+});
+document.getElementById('resetBtn').addEventListener('click', resetBoids);
+
+class Boid {
+  constructor() { this.reset(); }
+  reset() {
+    this.x = Math.random()*canvas.width;
+    this.y = Math.random()*canvas.height;
+    const angle = Math.random()*Math.PI*2;
+    const spd = 1.5+Math.random()*1.5;
+    this.vx = Math.cos(angle)*spd;
+    this.vy = Math.sin(angle)*spd;
+  }
+}
+
+let boids = [];
+let predator = {x:canvas.width/2, y:canvas.height/2, vx:2, vy:1.5};
+
+function resetBoids() {
+  boids = Array.from({length:boidCount}, ()=>new Boid());
+}
+resetBoids();
+
+const PERCEPTION = 60;
+const MAX_SPEED = 3.5;
+const MAX_FORCE = 0.08;
+const SEP_DIST = 28;
+
+function limit(vx,vy,max) {
+  const mag = Math.hypot(vx,vy);
+  if(mag>max) { return [vx/mag*max, vy/mag*max]; }
+  return [vx,vy];
+}
+
+function steer(boid, tx,ty) {
+  const mag = Math.hypot(tx,ty)||1;
+  const dx = tx/mag*MAX_SPEED - boid.vx;
+  const dy = ty/mag*MAX_SPEED - boid.vy;
+  return limit(dx,dy,MAX_FORCE);
+}
+
+function update() {
+  const W = canvas.width, H = canvas.height;
+  // Move predator
+  if(predatorOn) {
+    predator.x += predator.vx;
+    predator.y += predator.vy;
+    if(predator.x<0||predator.x>W) predator.vx*=-1;
+    if(predator.y<0||predator.y>H) predator.vy*=-1;
+    // chase nearest boid
+    let nearest=null, nearDist=Infinity;
+    for(const b of boids) {
+      const d=Math.hypot(b.x-predator.x,b.y-predator.y);
+      if(d<nearDist){nearDist=d;nearest=b;}
+    }
+    if(nearest) {
+      const dx=nearest.x-predator.x, dy=nearest.y-predator.y;
+      const mag=Math.hypot(dx,dy)||1;
+      predator.vx += dx/mag*0.15;
+      predator.vy += dy/mag*0.15;
+      const [pvx,pvy]=limit(predator.vx,predator.vy,2.5);
+      predator.vx=pvx; predator.vy=pvy;
+    }
+  }
+
+  for(const b of boids) {
+    let cntC=0, cntS=0, cntA=0;
+    let cx=0,cy=0, sx=0,sy=0, ax=0,ay=0;
+    for(const other of boids) {
+      if(other===b) continue;
+      const dx=other.x-b.x, dy=other.y-b.y;
+      const d=Math.hypot(dx,dy);
+      if(d<PERCEPTION) {
+        cx+=other.x; cy+=other.y; cntC++;
+        ax+=other.vx; ay+=other.vy; cntA++;
+        if(d<SEP_DIST) { sx+=b.x-other.x; sy+=b.y-other.y; cntS++; }
+      }
+    }
+    let fx=0,fy=0;
+    if(cntC>0) { cx/=cntC; cy/=cntC; const [dx,dy]=steer(b,cx-b.x,cy-b.y); fx+=dx*cohesion; fy+=dy*cohesion; }
+    if(cntS>0) { const [dx,dy]=steer(b,sx,sy); fx+=dx*separation; fy+=dy*separation; }
+    if(cntA>0) { ax/=cntA; ay/=cntA; const [dx,dy]=steer(b,ax,ay); fx+=dx*alignment; fy+=dy*alignment; }
+    // Flee predator
+    if(predatorOn) {
+      const dx=b.x-predator.x, dy=b.y-predator.y;
+      const d=Math.hypot(dx,dy);
+      if(d<120) { const mag=d||1; b.vx+=dx/mag*3; b.vy+=dy/mag*3; }
+    }
+    b.vx+=fx; b.vy+=fy;
+    const [vx,vy]=limit(b.vx,b.vy,MAX_SPEED);
+    b.vx=vx; b.vy=vy;
+    b.x+=b.vx; b.y+=b.vy;
+    if(b.x<0) b.x=W; if(b.x>W) b.x=0;
+    if(b.y<0) b.y=H; if(b.y>H) b.y=0;
+  }
+}
+
+function drawBoid(b, color) {
+  const angle = Math.atan2(b.vy,b.vx);
+  ctx.save();
+  ctx.translate(b.x,b.y);
+  ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.moveTo(8,0);
+  ctx.lineTo(-5,4);
+  ctx.lineTo(-5,-4);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.restore();
+}
+
+function draw() {
+  const W=canvas.width, H=canvas.height;
+  if(trailsOn) {
+    ctx.fillStyle='rgba(10,10,15,0.25)';
+    ctx.fillRect(0,0,W,H);
+  } else {
+    ctx.fillStyle='#050a0f';
+    ctx.fillRect(0,0,W,H);
+  }
+  update();
+  for(const b of boids) drawBoid(b, '#22d3ee');
+  if(predatorOn) {
+    const angle=Math.atan2(predator.vy,predator.vx);
+    ctx.save(); ctx.translate(predator.x,predator.y); ctx.rotate(angle);
+    ctx.beginPath(); ctx.moveTo(14,0); ctx.lineTo(-8,7); ctx.lineTo(-8,-7); ctx.closePath();
+    ctx.fillStyle='#ef4444'; ctx.fill(); ctx.restore();
+    ctx.beginPath(); ctx.arc(predator.x,predator.y,50,0,Math.PI*2);
+    ctx.strokeStyle='rgba(239,68,68,0.2)'; ctx.lineWidth=1; ctx.stroke();
+  }
+  requestAnimationFrame(draw);
+}
+draw();
+</script>
+</body>
+</html>
